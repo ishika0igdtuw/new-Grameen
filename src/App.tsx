@@ -11,6 +11,8 @@ import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import AboutUs from "./pages/AboutUs";
 import NotFound from "./pages/NotFound";
+import BlockchainViewer from "./pages/BlockchainViewer";
+import PaymentPage from "./pages/PaymentPage";
 import ResidueListingPage from "./pages/farmer/ResidueListingPage";
 import PaymentRecordsPage from "./pages/farmer/PaymentRecordsPage";
 import FarmerProfilePage from "./pages/farmer/FarmerProfilePage";
@@ -32,6 +34,8 @@ const App = () => (
               <Route path="/auth" element={<Auth />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/about" element={<AboutUs />} />
+              <Route path="/blockchain" element={<BlockchainViewer />} />
+              <Route path="/payment/:orderId" element={<PaymentPage />} />
               {/* Panchayat Routes */}
               <Route path="/panchayat/manage" element={<PanchayatManagePage />} />
               {/* Farmer Routes */}

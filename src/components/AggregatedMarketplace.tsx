@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +16,7 @@ export const AggregatedMarketplace = () => {
   const { profile } = useAuth();
   const { toast } = useToast();
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [aggregatedListings, setAggregatedListings] = useState<any[]>([]);
   const [filteredListings, setFilteredListings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,7 +107,7 @@ export const AggregatedMarketplace = () => {
     try {
       const totalAmount = listing.total_quantity_tons * listing.avg_price_per_ton;
 
-      // Create bulk purchase record
+      // Create bulk purchase record with payment_status: 'pending'
       const { data: bulkPurchase, error: purchaseError } = await supabase
         .from('bulk_purchases')
         .insert({
@@ -116,39 +118,21 @@ export const AggregatedMarketplace = () => {
           total_quantity_tons: listing.total_quantity_tons,
           total_amount: totalAmount,
           avg_price_per_ton: listing.avg_price_per_ton,
-          payment_status: 'pending'
+          payment_status: 'pending' // Keep as pending, don't complete payment
         })
         .select()
         .single();
 
       if (purchaseError) throw purchaseError;
 
-      // Call function to create farmer payment distributions
-      const { error: distributionError } = await supabase.rpc(
-        'create_farmer_payment_distributions',
-        {
-          bulk_purchase_id_param: bulkPurchase.id,
-          panchayat_id_param: listing.panchayat_id,
-          crop_type_param: listing.crop_type,
-          disposal_method_param: listing.disposal_method,
-          total_purchase_amount: totalAmount
-        }
-      );
-
-      if (distributionError) throw distributionError;
-
-      toast({
-        title: 'Purchase successful!',
-        description: `You have purchased ${listing.total_quantity_tons} tons of ${listing.crop_type.replace('_', ' ')} for ₹${totalAmount.toLocaleString()}`,
-      });
-
+      // Redirect to payment page instead of completing payment
       setShowPurchaseDialog(false);
-      fetchAggregatedListings(); // Refresh listings
-    } catch (error) {
+      navigate(`/payment/${bulkPurchase.id}`);
+    } catch (error: any) {
       console.error('Error creating purchase:', error);
       toast({
         title: t('common.error'),
-        description: 'Failed to complete purchase',
+        description: error.message || 'Failed to create purchase',
         variant: "destructive"
       });
     }

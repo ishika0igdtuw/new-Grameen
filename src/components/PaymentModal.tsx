@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -43,6 +44,7 @@ interface PaymentModalProps {
 export const PaymentModal = ({ listing, open, onOpenChange, onSuccess }: PaymentModalProps) => {
   const { profile } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     quantity_tons: listing.quantity_tons,
@@ -58,7 +60,8 @@ export const PaymentModal = ({ listing, open, onOpenChange, onSuccess }: Payment
 
     setLoading(true);
     try {
-      // Create purchase record
+
+      // Create purchase record with payment_status: 'pending'
       const { data: purchaseData, error: purchaseError } = await supabase
         .from('purchases')
         .insert({
@@ -68,44 +71,16 @@ export const PaymentModal = ({ listing, open, onOpenChange, onSuccess }: Payment
           total_amount: totalAmount,
           pickup_date: formData.pickup_date || null,
           notes: formData.notes || null,
-          payment_status: 'pending'
+          payment_status: 'pending' // Keep as pending
         })
         .select()
         .single();
 
       if (purchaseError) throw purchaseError;
 
-      // For now, simulate payment success
-      // In production, integrate with Stripe/Razorpay
-      const { error: paymentUpdateError } = await supabase
-        .from('purchases')
-        .update({ 
-          payment_status: 'completed',
-          payment_id: `pay_${Date.now()}`
-        })
-        .eq('id', purchaseData.id);
-
-      if (paymentUpdateError) throw paymentUpdateError;
-
-      // Update residue listing status
-      const newStatus = formData.quantity_tons >= listing.quantity_tons ? 'sold' : 'available';
-      const { error: listingUpdateError } = await supabase
-        .from('crop_residue_listings')
-        .update({ 
-          status: newStatus,
-          quantity_tons: listing.quantity_tons - formData.quantity_tons
-        })
-        .eq('id', listing.id);
-
-      if (listingUpdateError) throw listingUpdateError;
-
-      toast({
-        title: "Purchase Successful!",
-        description: `You have successfully purchased ${formData.quantity_tons} tons of ${listing.crop_type} for ₹${totalAmount.toLocaleString()}.`
-      });
-
-      onSuccess();
+      // Redirect to payment page instead of processing payment
       onOpenChange(false);
+      navigate(`/payment/${purchaseData.id}`);
     } catch (error: any) {
       toast({
         title: "Purchase Failed",

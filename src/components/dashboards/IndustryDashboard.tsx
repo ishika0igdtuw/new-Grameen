@@ -83,6 +83,37 @@ export const IndustryDashboard = ({ activeSection = 'dashboard', onNavigate }: I
 
   const { totalOrders, totalSpent, totalQuantity, pendingOrders } = calculateStats();
 
+  const downloadInvoice = (order: any) => {
+    // Generate invoice content
+    const invoiceContent = `
+INVOICE
+====================
+Order ID: ${order.id}
+Date: ${new Date(order.created_at).toLocaleDateString()}
+Crop Type: ${order.crop_type?.replace('_', ' ') || 'N/A'}
+Quantity: ${order.total_quantity_tons || order.quantity_tons} tons
+Price per Ton: ₹${Math.round((order.total_amount || order.amount) / (order.total_quantity_tons || order.quantity_tons || 1)).toLocaleString()}
+Total Amount: ₹${(order.total_amount || order.amount).toLocaleString()}
+Payment Status: ${order.payment_status}
+Payment ID: ${order.payment_id || 'N/A'}
+====================
+Thank you for your purchase!
+    `;
+    
+    const blob = new Blob([invoiceContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `invoice-${order.id}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    toast({
+      title: 'Invoice Downloaded',
+      description: 'Your invoice has been downloaded'
+    });
+  };
+
   const renderDashboard = () => (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
       {/* Hero Section */}
@@ -393,11 +424,20 @@ export const IndustryDashboard = ({ activeSection = 'dashboard', onNavigate }: I
                         <h3 className="text-lg font-semibold capitalize">
                           {order.crop_type.replace('_', ' ')} Residue
                         </h3>
-                        <Badge variant={
-                          order.payment_status === 'paid' ? 'default' : 
-                          order.payment_status === 'pending' ? 'secondary' : 'destructive'
-                        }>
-                          {order.payment_status}
+                        <Badge 
+                          variant={
+                            order.payment_status === 'paid' ? 'default' : 
+                            order.payment_status === 'pending' ? 'secondary' : 'destructive'
+                          }
+                          className={
+                            order.payment_status === 'paid' ? 'bg-green-600 hover:bg-green-600' :
+                            order.payment_status === 'pending' ? 'bg-yellow-500 hover:bg-yellow-500' :
+                            ''
+                          }
+                        >
+                          {order.payment_status === 'paid' ? '🟢 Paid' :
+                           order.payment_status === 'pending' ? '🔴 Payment Pending' :
+                           '🟡 Processing'}
                         </Badge>
                       </div>
                       
@@ -426,10 +466,16 @@ export const IndustryDashboard = ({ activeSection = 'dashboard', onNavigate }: I
                         <Eye className="mr-2 h-4 w-4" />
                         View Details
                       </Button>
-                      <Button variant="outline" size="sm">
-                        <Download className="mr-2 h-4 w-4" />
-                        Invoice
-                      </Button>
+                      {order.payment_status === 'paid' && (
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => downloadInvoice(order)}
+                        >
+                          <Download className="mr-2 h-4 w-4" />
+                          Invoice
+                        </Button>
+                      )}
                     </div>
                   </div>
                   
@@ -442,19 +488,33 @@ export const IndustryDashboard = ({ activeSection = 'dashboard', onNavigate }: I
                       </div>
                       <div className="flex items-center gap-2">
                         {order.payment_status === 'paid' ? (
-                          <CheckCircle className="h-4 w-4 text-green-500" />
+                          <>
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                            <span>Paid</span>
+                          </>
                         ) : (
-                          <AlertCircle className="h-4 w-4 text-yellow-500" />
+                          <>
+                            <AlertCircle className="h-4 w-4 text-yellow-500" />
+                            <span>Payment Pending</span>
+                          </>
                         )}
-                        <span>Payment {order.payment_status === 'paid' ? 'Completed' : 'Pending'}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {order.payment_status === 'paid' ? (
+                          <>
+                            <Clock className="h-4 w-4 text-blue-500" />
+                            <span>In Transit</span>
+                          </>
+                        ) : (
+                          <>
+                            <Clock className="h-4 w-4 text-gray-400" />
+                            <span className="text-muted-foreground">In Transit</span>
+                          </>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <Clock className="h-4 w-4 text-gray-400" />
-                        <span>In Transit</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-gray-400" />
-                        <span>Delivered</span>
+                        <span className="text-muted-foreground">Delivered</span>
                       </div>
                     </div>
                   </div>
@@ -518,19 +578,34 @@ export const IndustryDashboard = ({ activeSection = 'dashboard', onNavigate }: I
                         ₹{order.total_amount.toLocaleString()}
                       </td>
                       <td className="py-3 px-4 text-sm">
-                        <Badge variant={
-                          order.payment_status === 'paid' ? 'default' : 
-                          order.payment_status === 'completed' ? 'default' :
-                          order.payment_status === 'pending' ? 'secondary' : 'destructive'
-                        }>
-                          {order.payment_status}
+                        <Badge 
+                          variant={
+                            order.payment_status === 'paid' ? 'default' : 
+                            order.payment_status === 'completed' ? 'default' :
+                            order.payment_status === 'pending' ? 'secondary' : 'destructive'
+                          }
+                          className={
+                            order.payment_status === 'paid' || order.payment_status === 'completed' ? 'bg-green-600 hover:bg-green-600' :
+                            order.payment_status === 'pending' ? 'bg-yellow-500 hover:bg-yellow-500' :
+                            ''
+                          }
+                        >
+                          {order.payment_status === 'paid' || order.payment_status === 'completed' ? '🟢 Paid' :
+                           order.payment_status === 'pending' ? '🔴 Payment Pending' :
+                           '🟡 Processing'}
                         </Badge>
                       </td>
                       <td className="py-3 px-4 text-sm">
                         <div className="flex gap-2">
-                          <Button variant="ghost" size="sm">
-                            <Download className="h-4 w-4" />
-                          </Button>
+                          {(order.payment_status === 'paid' || order.payment_status === 'completed') && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={() => downloadInvoice(order)}
+                            >
+                              <Download className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="sm">
                             <Eye className="h-4 w-4" />
                           </Button>

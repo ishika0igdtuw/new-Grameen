@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { ShoppingCart, Plus, Minus, Wheat, MapPin } from 'lucide-react';
 import { LocationPicker } from '@/components/LocationPicker';
 import { useTranslatedText } from '@/lib/translationUtils';
+import { grameenChain } from '@/lib/blockchain';
 
 // Import crop images  
 import paddyResidue from '@/assets/crops/paddy-residue.jpg';
@@ -77,6 +78,28 @@ export const MarketplaceResidueForm = ({ onSuccess, onCancel }: MarketplaceResid
   useEffect(() => {
     fetchPanchayatAndFarmers();
   }, [profile]);
+
+  // Auto-select first farmer for panchayat_admin when farmers list loads
+  useEffect(() => {
+    if (profile?.role === 'panchayat_admin' && farmers.length > 0 && !selectedFarmerId) {
+      setSelectedFarmerId(farmers[0].id);
+      console.log('Auto-selected farmer:', farmers[0].id, farmers[0].farmer_name);
+    }
+  }, [farmers, profile?.role, selectedFarmerId]);
+
+  // Debug: Log button state
+  useEffect(() => {
+    const isDisabled = loading || !selectedLocation?.address?.trim() || cart.length === 0 || !selectedFarmerId;
+    console.log('Button state:', {
+      disabled: isDisabled,
+      loading,
+      hasLocation: !!selectedLocation?.address?.trim(),
+      locationValue: selectedLocation?.address,
+      cartLength: cart.length,
+      hasFarmerId: !!selectedFarmerId,
+      farmerId: selectedFarmerId
+    });
+  }, [loading, selectedLocation, cart.length, selectedFarmerId]);
 
   const fetchPanchayatAndFarmers = async () => {
     if (!profile) return;
@@ -165,7 +188,12 @@ export const MarketplaceResidueForm = ({ onSuccess, onCancel }: MarketplaceResid
           variant: "destructive"
         });
       } else {
-        setFarmers(farmersData || []);
+        const farmersList = farmersData || [];
+        setFarmers(farmersList);
+        // Auto-select first farmer for panchayat_admin if available
+        if (farmersList.length > 0 && !selectedFarmerId) {
+          setSelectedFarmerId(farmersList[0].id);
+        }
       }
     } catch (error) {
       console.error('Error:', error);
@@ -238,34 +266,101 @@ export const MarketplaceResidueForm = ({ onSuccess, onCancel }: MarketplaceResid
     }
 
     setLoading(true);
+    
+    // Validate required fields
+    if (!selectedFarmerId) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a farmer.",
+        variant: "destructive"
+      });
+      setLoading(false);
+      return;
+    }
+
+    console.log('=== Creating Listings ===');
+    console.log('Farmer ID:', selectedFarmerId);
+    console.log('Panchayat ID:', panchayat.id);
+    console.log('Cart items:', cart.length);
+    console.log('Location:', selectedLocation?.address);
+
     try {
       // Create listings for each cart item
-      const insertPromises = cart.map(item => {
+      const insertPromises = cart.map(async (item) => {
+        const quantityTons = item.unit === 'tons' ? item.quantity : 
+                            item.unit === 'quintals' ? item.quantity / 10 : 
+                            item.quantity / 1000;
+        const pricePerTon = (cropRates[item.cropType as keyof typeof cropRates] || 0) * 1000;
+
         const insertData = {
           farmer_id: selectedFarmerId,
           panchayat_id: panchayat.id,
           crop_type: item.cropType as Database['public']['Enums']['crop_type'],
           disposal_method: 'sell_for_profit' as Database['public']['Enums']['disposal_method'],
-          quantity_tons: item.unit === 'tons' ? item.quantity : 
-                        item.unit === 'quintals' ? item.quantity / 10 : 
-                        item.quantity / 1000,
-          price_per_ton: (cropRates[item.cropType as keyof typeof cropRates] || 0) * 1000,
+          quantity_tons: quantityTons,
+          price_per_ton: pricePerTon,
           location_description: selectedLocation.address,
           latitude: null, // We're not using coordinates for now
           longitude: null, // We're not using coordinates for now
-          status: 'available' as Database['public']['Enums']['residue_status']
+          status: 'available' as Database['public']['Enums']['residue_status'],
+          verification_status: 'approved' // Auto-approve listings so they appear in marketplace
         };
         
-        return supabase.from('crop_residue_listings').insert(insertData);
+        console.log('Inserting listing for', item.cropType, ':', {
+          farmer_id: insertData.farmer_id,
+          panchayat_id: insertData.panchayat_id,
+          crop_type: insertData.crop_type,
+          quantity_tons: insertData.quantity_tons,
+          price_per_ton: insertData.price_per_ton,
+          status: insertData.status
+        });
+        
+        const { data, error } = await supabase
+          .from('crop_residue_listings')
+          .insert(insertData)
+          .select('id')
+          .single();
+
+        if (error) {
+          console.error('Supabase insert error:', error);
+          console.error('Failed insertData:', insertData);
+          console.error('Error details:', {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint
+          });
+          throw error;
+        }
+
+        console.log('Successfully inserted listing:', data.id);
+
+        // Record blockchain transaction after successful Supabase insert
+        // Blockchain logging happens AFTER DB insert - does not interfere
+        // Wrap in try-catch so blockchain errors don't break the flow
+        try {
+          grameenChain.addBlock({
+            timestamp: new Date().toISOString(),
+            data: {
+              crop_type: item.cropType,
+              quantity: item.quantity,
+              unit: item.unit,
+              farmer_id: selectedFarmerId,
+              panchayat_id: panchayat.id,
+              address: selectedLocation.address,
+              listing_id: data.id
+            }
+          });
+        } catch (blockchainError) {
+          // Log blockchain error but don't fail the listing creation
+          console.warn('Blockchain logging failed:', blockchainError);
+        }
+
+        return data;
       });
 
       const results = await Promise.all(insertPromises);
-      
-      // Check if any insertion failed
-      const errors = results.filter(result => result.error);
-      if (errors.length > 0) {
-        throw new Error('Failed to create some listings');
-      }
+      console.log('All listings created successfully:', results.length);
 
       toast({
         title: "Success",
@@ -274,9 +369,11 @@ export const MarketplaceResidueForm = ({ onSuccess, onCancel }: MarketplaceResid
       
       onSuccess();
     } catch (error: any) {
+      console.error('Error creating listings:', error);
+      console.error('Error stack:', error.stack);
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || 'Failed to create listings. Please check console for details.',
         variant: "destructive"
       });
     } finally {
@@ -377,12 +474,17 @@ export const MarketplaceResidueForm = ({ onSuccess, onCancel }: MarketplaceResid
                   <Input
                     placeholder="Enter your complete address (Street, Locality, Town/City, State, Pincode)"
                     value={selectedLocation?.address || ''}
-                    onChange={(e) => setSelectedLocation({
-                      lat: 0,
-                      lng: 0,
-                      address: e.target.value
-                    })}
+                    onChange={(e) => {
+                      const address = e.target.value;
+                      setSelectedLocation({
+                        lat: 0,
+                        lng: 0,
+                        address: address
+                      });
+                      console.log('Location updated:', address);
+                    }}
                     className="w-full"
+                    required
                   />
                   <p className="text-xs text-muted-foreground">
                     Example: 123 Main Street, Central Market, Mumbai, Maharashtra, 400001
@@ -451,6 +553,19 @@ export const MarketplaceResidueForm = ({ onSuccess, onCancel }: MarketplaceResid
               </Card>
             )}
 
+            {/* Debug Info - Remove in production */}
+            {process.env.NODE_ENV === 'development' && (
+              <div className="p-3 bg-gray-100 dark:bg-gray-800 rounded text-xs">
+                <p><strong>Debug Info:</strong></p>
+                <p>Loading: {loading ? 'Yes' : 'No'}</p>
+                <p>Location: {selectedLocation?.address ? `"${selectedLocation.address}"` : 'Missing'}</p>
+                <p>Cart Items: {cart.length}</p>
+                <p>Farmer ID: {selectedFarmerId || 'Missing'}</p>
+                <p>Panchayat: {panchayat?.id || 'Missing'}</p>
+                <p>Button Disabled: {loading || !selectedLocation?.address.trim() || cart.length === 0 || !selectedFarmerId ? 'Yes' : 'No'}</p>
+              </div>
+            )}
+
             {/* Submit Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t">
               <Button type="button" variant="outline" onClick={onCancel} className="flex-1">
@@ -459,11 +574,23 @@ export const MarketplaceResidueForm = ({ onSuccess, onCancel }: MarketplaceResid
               <Button 
                 type="submit" 
                 className="flex-1" 
-                disabled={loading || !selectedLocation?.address.trim() || cart.length === 0 || !selectedFarmerId}
+                disabled={loading || !selectedLocation?.address?.trim() || cart.length === 0 || !selectedFarmerId}
               >
                 {loading ? "Creating Listings..." : `Create ${cart.length} Listing${cart.length !== 1 ? 's' : ''} - Earn ₹${getTotalEarnings().toFixed(0)}`}
               </Button>
             </div>
+            
+            {/* Show what's missing if button is disabled */}
+            {!loading && (cart.length === 0 || !selectedLocation?.address?.trim() || !selectedFarmerId) && (
+              <div className="p-3 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded text-sm">
+                <p className="font-medium text-yellow-800 dark:text-yellow-200">Please complete the following:</p>
+                <ul className="list-disc list-inside mt-1 space-y-1 text-yellow-700 dark:text-yellow-300">
+                  {cart.length === 0 && <li>Add at least one crop residue to cart</li>}
+                  {!selectedLocation?.address?.trim() && <li>Enter pickup location address</li>}
+                  {!selectedFarmerId && <li>Select a farmer {profile?.role === 'panchayat_admin' ? '(required for panchayat admin)' : ''}</li>}
+                </ul>
+              </div>
+            )}
           </form>
         </CardContent>
       </Card>
